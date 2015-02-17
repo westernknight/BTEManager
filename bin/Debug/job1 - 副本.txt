@@ -1,0 +1,1 @@
+{"id":"111","templateName":"FR_News","templateNameURL":"http:\/\/s1\/btewebTest\/Public\/template\/FR_News.unity3d","sequence":[{"dataType":"simple"},{"dataType":"simple","action":"Appause","subtitlesNoTime":["asdasdas"],"voiceURL":"http:\/\/s1\/btewebTest\/Public\/uploads\/sounds\/20150110\/13-56-31-96260vihszwgm.wav"},{"dataType":"simple"}]}
