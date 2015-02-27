@@ -3,7 +3,10 @@ D:\zhangjiajun\studio\BTEManager\bin\Debug\BTEManager.exe
 D:\zhangjiajun\studio\BTEManager\bin\Debug\BTEManager.pdb
 D:\zhangjiajun\studio\BTEManager\obj\Debug\BTEManager.exe
 D:\zhangjiajun\studio\BTEManager\obj\Debug\BTEManager.pdb
+D:\zhangjiajun\studio\BTEManager\obj\Debug\BTEManager.csprojResolveAssemblyReference.cache
 C:\Users\Administrator\Desktop\bte\BTEManager.exe.config
 C:\Users\Administrator\Desktop\bte\BTEManager.exe
 C:\Users\Administrator\Desktop\bte\BTEManager.pdb
-D:\zhangjiajun\studio\BTEManager\obj\Debug\BTEManager.csprojResolveAssemblyReference.cache
+D:\zhangjiajun\studio\BTEManager\trunk\obj\Debug\BTEManager.exe
+D:\zhangjiajun\studio\BTEManager\trunk\obj\Debug\BTEManager.pdb
+D:\zhangjiajun\studio\BTEManager\trunk\obj\Debug\BTEManager.csprojResolveAssemblyReference.cache

@@ -70,6 +70,7 @@ namespace BlueTaleManager
         public string templateName;
         public float peakMemory;
         public DateTime startTime;
+        public DateTime renderDoneTime;
         public DateTime endTime;
         public int fileSize;
         public string fileName;

@@ -57,15 +57,25 @@ namespace BlueTaleManager
         static string doneMp4Path;
         static string showPercentAddress;
         static string checkJsonAddress;
-        static string stressPath;
-        static int stressInstanceMaxCount = 2;
-        static bool debugMode = true;//是否测试
+
+        static bool debugMode = true;//是否输入测试测试
 
         static bool remoteFileRecipient = false;//是否接收server的文件
 
-        static bool stressTest = true;//是否测试
+        //========多个实例测试硬件
+        static bool stressTestMode = false;//是否测试
+        static string stressInstancePath;
+        static int stressInstanceMaxCount = 2;
         static int stressInstanceCount = 0;
-        static int finishInstanceCount;
+        static int stressFinishInstanceCount;
+        static string stressRecordFileName = "record";
+
+        //========自定json测试
+        static bool selfJsonTestMode = false;
+        static string selfJsonPath = "";
+        static int selfJsonFinishCount = 0;
+        static LitJson.JsonData selfJsonData = null;
+
         static List<Socket> allSockets = new List<Socket>();
 
 
@@ -87,6 +97,7 @@ namespace BlueTaleManager
 
             return dest;
         }
+
         static void DealPackage(Socket ts, byte[] body_data)
         {
             BTEData dataSave = new BTEData() { bodyLength = body_data.Length, bodyData = body_data };
@@ -101,6 +112,34 @@ namespace BlueTaleManager
                         GFS_MINSSION_WORK_PERCNET_Struct obj = (GFS_MINSSION_WORK_PERCNET_Struct)formatter.Deserialize(ms);
 
                         Console.WriteLine("job percent: " + string.Format("{0:N1}", obj.percent * 100));
+
+                        try
+                        {
+                            if (debugMode == false && selfJsonTestMode == false && stressTestMode == false)
+                            {
+                                int id = jobidManager.GetSocketJobId(ts);
+                                IDictionary<string, string> parameters = new Dictionary<string, string>();
+                                parameters.Add("job_id", id.ToString());
+                                parameters.Add("info", string.Format("{0:N1}", obj.percent * 100));
+                                var response = HttpWebResponseUtility.CreatePostHttpResponse(showPercentAddress, parameters, null, null, Encoding.UTF8, null);
+                                if (response != null)
+                                {
+                                    Stream _str = response.GetResponseStream();
+                                    StreamReader _strd = new StreamReader(_str);
+                                    string html = _strd.ReadToEnd();
+                                    response.Close();
+                                }
+                                else
+                                {
+                                    response.Close();
+                                }
+                            }
+                        }
+                        catch (Exception ex)
+                        {
+
+                            Console.WriteLine(ex);
+                        }
                     }
                     break;
 
@@ -125,7 +164,7 @@ namespace BlueTaleManager
                         TryTellPhpServerJobDone(ts, dataSave, false);
                     }
                     break;
-                case BTEGFSCommand.GFS_SERVER_STRESS_TEST_REPORT://所有任务完成
+                case BTEGFSCommand.GFS_SERVER_STRESS_TEST_REPORT://任务完成
                     {
                         Console.WriteLine("BTEGFSCommand.GFS_SERVER_STRESS_TEST_REPORT");
 
@@ -134,22 +173,28 @@ namespace BlueTaleManager
                         MemoryStream ms = new MemoryStream(UnPack(dataSave.bodyData));
                         GFS_SERVER_STRESS_TEST_REPORT_Struct obj = (GFS_SERVER_STRESS_TEST_REPORT_Struct)formatter.Deserialize(ms);
 
-                        string info = string.Format("{0},{1},{2},{3},{4},{5}{6:N2},{7},{8:N2},{9}", stressInstanceCount, obj.serverID, obj.templateName, obj.startTime, obj.endTime, obj.endTime - obj.startTime, (float)obj.fileSize / 1024 / 1024, obj.videoDuration, obj.peakMemory, obj.noWrong);
+                        string info = string.Format("{0},{1},{2},(startTime){3},(renderDoneTime){4},(endTime){5},(generateDeltaTime){6},(renderDeltaTime){7},(ffmpegDeltaTime){8},(fileSize){9:N2},(videoDuration){10},(peakMemory){11:N2},(graphicsMemUse){12:N2},(gpuLoad){13:N2},{14}", stressInstanceCount, obj.serverID, obj.templateName, obj.startTime, obj.renderDoneTime, obj.endTime, (obj.endTime - obj.startTime).TotalSeconds, (obj.renderDoneTime - obj.startTime).TotalSeconds, (obj.endTime - obj.renderDoneTime).TotalSeconds, (float)obj.fileSize / 1024 / 1024, obj.videoDuration, obj.peakMemory, obj.graphicsMemUse, obj.gpuLoad, obj.noWrong);
 
 
-                        Process.Start("cmd", string.Format("/c echo {0}>>record.txt", info));
-
-
-                        finishInstanceCount++;
-                        if (finishInstanceCount == stressInstanceCount)
+                        Process.Start("cmd", string.Format("/c echo {0}>>{1}.txt", info, stressRecordFileName));
+                        Console.WriteLine(info);
+                        Console.WriteLine();
+                    }
+                    break;
+                case BTEGFSCommand.GFS_SERVER_STRESS_TEST_DONE://所有任务完成
+                    {
+                        Console.WriteLine("BTEGFSCommand.GFS_SERVER_STRESS_TEST_DONE");
+                        Process.Start("cmd", string.Format("/c echo,>>{0}.txt", stressRecordFileName));
+                        stressFinishInstanceCount++;
+                        if (stressFinishInstanceCount == stressInstanceCount)
                         {
-                            finishInstanceCount = 0;
+                            stressFinishInstanceCount = 0;
 
                             StartInstance();
                         }
+
                     }
                     break;
-                    
                 default:
                     Console.WriteLine("BTEGFSCommand.Know");
                     break;
@@ -259,16 +304,16 @@ namespace BlueTaleManager
         }
         static void ReceiveCallback(IAsyncResult result)
         {
-
+            Socket ts = (Socket)result.AsyncState;
             try
             {
-                Socket ts = (Socket)result.AsyncState;
+               
                 int c = ts.EndReceive(result);
 
                 result.AsyncWaitHandle.Close();
                 if (c == 0)
-                {
-                    ts.Disconnect(false);
+                {                   
+                    ServerDisconnect(ts);
                 }
                 else
                 {
@@ -287,157 +332,10 @@ namespace BlueTaleManager
             catch (Exception ex)
             {
                 Console.WriteLine(ex);
-            }
-        }
-        static void ReceiveDataLengthCallback(IAsyncResult result)
-        {
-            ReceiveCallback(result);
-            return;
-            Socket ts = (Socket)result.AsyncState;
-            try
-            {
-                int c = ts.EndReceive(result);
-                result.AsyncWaitHandle.Close();
-
-                if (c == 0)
-                {
-                    ServerDisconnect(ts);
-                    return;
-                }
-
-
-                BTEData dataSave = new BTEData();
-
-
-                byte[] packageHeader = new byte[4];
-
-                packageHeader[0] = tmpData[0];
-                packageHeader[1] = tmpData[1];
-                packageHeader[2] = tmpData[2];
-                packageHeader[3] = tmpData[3];
-
-
-                dataSave.bodyLength = BitConverter.ToInt32(packageHeader, 0);
-                dataSave.bodyData = new byte[dataSave.bodyLength];
-
-                Buffer.BlockCopy(tmpData, 4, dataSave.bodyData, 0, c - 4);
-                int bitWritted = c - 4;
-
-                while (c > 0)
-                {
-                    if (bitWritted == dataSave.bodyLength)
-                        break;
-
-                    c = ts.Receive(tmpData, 0, tmpData.Length, SocketFlags.None);
-                    if (c == 0)
-                    {
-                        ServerDisconnect(ts);
-                        return;
-                    }
-                    Buffer.BlockCopy(tmpData, 0, dataSave.bodyData, bitWritted, c);
-
-                    bitWritted += c;
-                }
-
-                ts.BeginReceive(tmpData, 0, tmpData.Length, SocketFlags.None, new AsyncCallback(ReceiveDataLengthCallback), ts);
-
-
-                switch (ParseHeader(dataSave.bodyData))
-                {
-                    case BTEGFSCommand.GFS_MINSSION_WORK_PERCNET:
-                        {
-                            Console.WriteLine("BTEGFSCommand.GFS_MINSSION_WORK_PERCNET");
-                            IFormatter formatter = new BinaryFormatter();
-                            formatter.Binder = new UBinder();
-                            MemoryStream ms = new MemoryStream(UnPack(dataSave.bodyData));
-                            GFS_MINSSION_WORK_PERCNET_Struct obj = (GFS_MINSSION_WORK_PERCNET_Struct)formatter.Deserialize(ms);
-
-
-
-                            try
-                            {
-
-                                if (debugMode == false)
-                                {
-                                    int id = jobidManager.GetSocketJobId(ts);
-                                    IDictionary<string, string> parameters = new Dictionary<string, string>();
-                                    parameters.Add("job_id", id.ToString());
-                                    parameters.Add("info", string.Format("{0:N1}", obj.percent * 100));
-                                    Console.WriteLine("job percent: " + string.Format("{0:N1}", obj.percent * 100));
-                                    var response = HttpWebResponseUtility.CreatePostHttpResponse(showPercentAddress, parameters, null, null, Encoding.UTF8, null);
-                                    if (response != null)
-                                    {
-                                        Stream _str = response.GetResponseStream();
-                                        StreamReader _strd = new StreamReader(_str);
-                                        string html = _strd.ReadToEnd();
-                                        response.Close();
-                                    }
-                                    else
-                                    {
-                                        response.Close();
-                                    }
-                                }
-                                else
-                                {
-                                    Console.WriteLine("job percent: " + string.Format("{0:N1}", obj.percent * 100));
-                                }
-
-                            }
-                            catch (Exception ex)
-                            {
-
-                                Console.WriteLine(ex);
-                            }
-                            break;
-                        }
-
-                    case BTEGFSCommand.GFS_EXCEPTION:
-                        {
-                            Console.WriteLine("BTEGFSCommand.GFS_EXCEPTION");
-                            IFormatter formatter = new BinaryFormatter();
-                            formatter.Binder = new UBinder();
-                            MemoryStream ms = new MemoryStream(UnPack(dataSave.bodyData));
-                            GFS_EXCEPTION_Struct obj = (GFS_EXCEPTION_Struct)formatter.Deserialize(ms);
-                            Console.WriteLine("reason " + obj.reason);
-                            TryTellPhpServerJobDone(ts, dataSave, true);
-                        }
-
-                        break;
-                    case BTEGFSCommand.GFS_GENERATEVIDEOREQUESTSUCCEEDED:
-                        Console.WriteLine("BTEGFSCommand.GFS_GENERATEVIDEOREQUESTSUCCEEDED");
-                        break;
-                    case BTEGFSCommand.GFS_GENERATEVIDEODONE:
-                        {
-                            Console.WriteLine("BTEGFSCommand.GFS_GENERATEVIDEODONE");
-                            TryTellPhpServerJobDone(ts, dataSave, false);
-                        }
-                        break;
-                    case BTEGFSCommand.GFS_SERVER_STRESS_TEST_DONE://所有任务完成
-                        {
-                            Console.WriteLine("BTEGFSCommand.GFS_SERVER_STRESS_TEST_DONE");
-                            finishInstanceCount++;
-                            if (finishInstanceCount == stressInstanceCount)
-                            {
-                                finishInstanceCount = 0;
-
-                                StartInstance();
-                            }
-                        }
-
-                        break;
-                    default:
-                        break;
-                }
-
-
-            }
-            catch (Exception e)
-            {
-                Console.WriteLine(e);
                 ServerDisconnect(ts);
-
             }
         }
+
 
         private static void ServerDisconnect(Socket ts)
         {
@@ -446,9 +344,7 @@ namespace BlueTaleManager
                 jobidManager.CloseSocket(ts);
                 allSockets.Remove(ts);
                 stressInstanceCount--;
-                ts.Shutdown(SocketShutdown.Both);
-                ts.Dispose();
-                ts = null;
+                ts.Disconnect(false);
                 Console.WriteLine("客户端已断开连接");
             }
             catch (Exception ex)
@@ -465,7 +361,7 @@ namespace BlueTaleManager
 
             int jobID = jobidManager.GetSocketJobId(ts);
 
-            if (debugMode)
+            if (debugMode||stressTestMode||selfJsonTestMode)
             {
                 ServerSocketIsCasual(ts);
             }
@@ -648,176 +544,181 @@ namespace BlueTaleManager
         }
 
 
-
-        static void GetAndSend2_changeJob(Socket ts)
+        static void GetSelfJsonMission(Socket ts)
         {
+            DirectoryInfo di = new DirectoryInfo(selfJsonPath);
+            FileInfo[] files = di.GetFiles();
 
-
-            FileInfo fi = new FileInfo("job2.txt");
-            StreamReader sr = new StreamReader(fi.OpenRead());
-
-
-            STS_RECORD_VIDEO_Struct str2 = new STS_RECORD_VIDEO_Struct()
+            List<FileInfo> jsonFiles = new List<FileInfo>();
+            foreach (var item in files)
             {
-                hasContent = true,
-                jasonContent = sr.ReadToEnd(),
-            };
-            LitJson.JsonData json;
-            json = LitJson.JsonMapper.ToObject(str2.jasonContent);
-            jobID = int.Parse((string)json["id"]);
-            Console.WriteLine("jobID: " + jobID.ToString());
-
-            SendWithLength(ts, (int)(BTESTSCommand.STS_RECORD_VIDEO), str2);
-            Console.WriteLine(str2.jasonContent);
-            Console.WriteLine();
-
-
-
-        }
-        static void FinishRequireJob(string url)
-        {
-            HttpWebRequest _HttpWebRequest = HttpWebRequest.Create(url) as HttpWebRequest;
-            _HttpWebRequest.Method = "GET";
-            using (WebResponse _WebResponse = _HttpWebRequest.GetResponse())
-            {
-                Stream _Stream = _WebResponse.GetResponseStream();
-                using (StreamReader _StreamReader = new StreamReader(_Stream))
+                if (item.Extension == ".json")
                 {
+                    jsonFiles.Add(item);
                 }
             }
-
-        }
-        static void GetMission(Socket ts)
-        {
-
-            if (debugMode)
+            if (jsonFiles.Count!=0)
             {
-
-                try
-                {
-
-                    int jobID = 0;
-                    while (true)
-                    {
-                        Console.WriteLine("input jobid:");
-                        try
-                        {
-                            jobID = int.Parse(Console.ReadLine());
-                            break;
-                        }
-                        catch (Exception e)
-                        {
-                            Console.WriteLine(e);
-
-                        }
-                    }
-
-                    if (ts.Connected == true)
-                    {
-                        jobidManager.MoundJobId(ts, jobID);
-                        string url = checkJsonAddress + jobID.ToString();
-                        HttpWebRequest _HttpWebRequest = HttpWebRequest.Create(url) as HttpWebRequest;
-                        _HttpWebRequest.Method = "GET";
-                        using (WebResponse _WebResponse = _HttpWebRequest.GetResponse())
-                        {
-                            Stream _Stream = _WebResponse.GetResponseStream();
-                            using (StreamReader _StreamReader = new StreamReader(_Stream))
-                            {
-                                string json_string = _StreamReader.ReadToEnd();
-                                if (string.IsNullOrEmpty(json_string))
-                                {
-                                    Console.WriteLine("json id is null");
-                                    ServerSocketIsCasual(ts);
-                                }
-                                else
-                                {
-                                    try
-                                    {
-                                        LitJson.JsonData json;
-                                        json = LitJson.JsonMapper.ToObject(json_string);
-                                        json["id"] = jobID.ToString();
-                                        STS_RECORD_VIDEO_Struct str2 = new STS_RECORD_VIDEO_Struct()
-                                        {
-                                            hasContent = true,
-                                            jasonContent = json.ToJson()
-                                        };
-
-                                        Console.WriteLine(str2.jasonContent);
-                                        SendWithLength(ts, (int)(BTESTSCommand.STS_RECORD_VIDEO), str2);
-                                    }
-                                    catch (Exception ex)
-                                    {
-
-                                        Console.WriteLine(json_string);
-                                        Console.WriteLine(ex);
-                                        ServerSocketIsCasual(ts);
-                                        return;
-                                    }
-
-
-
-                                }
-                            }
-                        }
-                    }
-
-                }
-                catch (Exception ex)
-                {
-                    Console.WriteLine(ex);
-                    ServerSocketIsCasual(ts);
-                }
-
-
+                
             }
-            else
+            if (selfJsonFinishCount < jsonFiles.Count)
             {
-                try
+                using (StreamReader sr = new StreamReader(jsonFiles[selfJsonFinishCount].OpenRead()))
                 {
-                    string jobString = queryAddress + jobidManager.GetSocketWorkId(ts);
-                    Console.WriteLine("job: " + jobString);
-                    HttpWebRequest _HttpWebRequest = HttpWebRequest.Create(jobString) as HttpWebRequest;
+                    string json = sr.ReadToEnd();
+                    selfJsonData = LitJson.JsonMapper.ToObject(json);
+                    selfJsonData["id"] = Path.GetFileNameWithoutExtension(jsonFiles[selfJsonFinishCount].Name);
+                    STS_RECORD_VIDEO_Struct str = new STS_RECORD_VIDEO_Struct()
+                    {
+                        hasContent = true,
+
+                        jasonContent = selfJsonData.ToJson(),
+                    };
+                    SendWithLength(ts, (int)(BTESTSCommand.STS_RECORD_VIDEO), str);
+                }
+                selfJsonFinishCount++;
+            }
+            else if (jsonFiles.Count!=0)
+            {
+                selfJsonFinishCount = 0;
+                Console.WriteLine("all json has finish,press any key to restart...");
+                Console.ReadKey();
+                using (StreamReader sr = new StreamReader(jsonFiles[selfJsonFinishCount].OpenRead()))
+                {
+                    string json = sr.ReadToEnd();
+                    selfJsonData = LitJson.JsonMapper.ToObject(json);
+                    selfJsonData["id"] = Path.GetFileNameWithoutExtension(jsonFiles[selfJsonFinishCount].Name);
+                    STS_RECORD_VIDEO_Struct str = new STS_RECORD_VIDEO_Struct()
+                    {
+                        hasContent = true,
+
+                        jasonContent = selfJsonData.ToJson(),
+                    };
+                    SendWithLength(ts, (int)(BTESTSCommand.STS_RECORD_VIDEO), str);
+                }
+                selfJsonFinishCount++;
+            }
+        }
+        static void GetDebugModeMission(Socket ts)
+        {
+            try
+            {
+
+                int jobID = 0;
+                while (true)
+                {
+                    Console.WriteLine("input jobid:");
+                    try
+                    {
+                        jobID = int.Parse(Console.ReadLine());
+                        break;
+                    }
+                    catch (Exception e)
+                    {
+                        Console.WriteLine(e);
+
+                    }
+                }
+
+                if (ts.Connected == true)
+                {
+                    jobidManager.MoundJobId(ts, jobID);
+                    string url = checkJsonAddress + jobID.ToString();
+                    HttpWebRequest _HttpWebRequest = HttpWebRequest.Create(url) as HttpWebRequest;
                     _HttpWebRequest.Method = "GET";
-
                     using (WebResponse _WebResponse = _HttpWebRequest.GetResponse())
                     {
                         Stream _Stream = _WebResponse.GetResponseStream();
                         using (StreamReader _StreamReader = new StreamReader(_Stream))
                         {
-
-                            STS_RECORD_VIDEO_Struct str = new STS_RECORD_VIDEO_Struct()
+                            string json_string = _StreamReader.ReadToEnd();
+                            if (string.IsNullOrEmpty(json_string))
                             {
-                                hasContent = true,
-
-                                jasonContent = _StreamReader.ReadToEnd(),
-                            };
-                            if (string.IsNullOrEmpty(str.jasonContent))
-                            {
-                                Console.WriteLine("null job");
-                                Thread.Sleep(5000);
-                                if (ts.Connected)
-                                {
-                                    ServerSocketIsCasual(ts);
-                                }
+                                Console.WriteLine("json id is null");
+                                ServerSocketIsCasual(ts);
                             }
                             else
                             {
-                                SendMission(ts, str);
+                                try
+                                {
+                                    LitJson.JsonData json;
+                                    json = LitJson.JsonMapper.ToObject(json_string);
+                                    json["id"] = jobID.ToString();
+                                    STS_RECORD_VIDEO_Struct str2 = new STS_RECORD_VIDEO_Struct()
+                                    {
+                                        hasContent = true,
+                                        jasonContent = json.ToJson()
+                                    };
 
+                                    Console.WriteLine(str2.jasonContent);
+                                    SendWithLength(ts, (int)(BTESTSCommand.STS_RECORD_VIDEO), str2);
+                                }
+                                catch (Exception ex)
+                                {
+
+                                    Console.WriteLine(json_string);
+                                    Console.WriteLine(ex);
+                                    ServerSocketIsCasual(ts);
+                                    return;
+                                }
                             }
                         }
                     }
                 }
-                catch (Exception e)
+
+            }
+            catch (Exception ex)
+            {
+                Console.WriteLine(ex);
+                ServerSocketIsCasual(ts);
+            }
+        }
+        static void GetMission(Socket ts)
+        {
+            try
+            {
+                string jobString = queryAddress + jobidManager.GetSocketWorkId(ts);
+                Console.WriteLine("job: " + jobString);
+                HttpWebRequest _HttpWebRequest = HttpWebRequest.Create(jobString) as HttpWebRequest;
+                _HttpWebRequest.Method = "GET";
+
+                using (WebResponse _WebResponse = _HttpWebRequest.GetResponse())
                 {
-                    Console.WriteLine(e);
-                    if (ts.Connected)
+                    Stream _Stream = _WebResponse.GetResponseStream();
+                    using (StreamReader _StreamReader = new StreamReader(_Stream))
                     {
-                        ServerSocketIsCasual(ts);
+
+                        STS_RECORD_VIDEO_Struct str = new STS_RECORD_VIDEO_Struct()
+                        {
+                            hasContent = true,
+
+                            jasonContent = _StreamReader.ReadToEnd(),
+                        };
+                        if (string.IsNullOrEmpty(str.jasonContent))
+                        {
+                            Console.WriteLine("null job");
+                            Thread.Sleep(5000);
+                            if (ts.Connected)
+                            {
+                                ServerSocketIsCasual(ts);
+                            }
+                        }
+                        else
+                        {
+                            SendMission(ts, str);
+
+                        }
                     }
                 }
             }
-
+            catch (Exception e)
+            {
+                Console.WriteLine(e);
+                if (ts.Connected)
+                {
+                    ServerSocketIsCasual(ts);
+                }
+            }
         }
 
         private static void SendMission(Socket ts, STS_RECORD_VIDEO_Struct str)
@@ -862,9 +763,10 @@ namespace BlueTaleManager
             if (stressInstanceCount < stressInstanceMaxCount)
             {
                 //string exePathDir = stressPath+"\\server"+stressInstanceCount;
-                string exePathDir = stressPath;
+                string exePathDir = stressInstancePath;
                 string exeName = "bteserver_d3d11.exe";
-                Process.Start("cmd", string.Format("/c cd /d {0} && {1}", exePathDir, exeName));
+                Process standalone = Process.Start("cmd", string.Format("/c cd /d {0} && {1}", exePathDir, exeName));
+                ServerStatusRecord.GetInstance().processList.Add(standalone);
                 Console.WriteLine(string.Format("/c cd /d {0} && {1}", exePathDir, exeName));
             }
         }
@@ -887,7 +789,7 @@ namespace BlueTaleManager
                         doneAddress = "http://s1/bteweb/server/jobDone.php?job_id=";
                         showPercentAddress = "http://s1/bte/Video/showpercent";
                         checkJsonAddress = "http://s1/bte/Video/checkjson?id=";
-                        stressPath = @"C:\Users\Administrator\Desktop\btetest";
+                        stressInstancePath = @"C:\Users\Administrator\Desktop\btetest";
                         doneMp4Path = @"\\S1\htdocs\bte\Public\Video\";
                         arguments["managerPort"] = managerPort;
                         arguments["serverStartId"] = ServerStartId;
@@ -899,9 +801,12 @@ namespace BlueTaleManager
                         arguments["doneMp4Path"] = doneMp4Path;
                         arguments["debugMode"] = debugMode;
                         arguments["remoteFileRecipient"] = remoteFileRecipient;
-                        arguments["stressPath"] = stressPath;
-                        arguments["stressTest"] = stressTest;
-                        arguments["stressInstanceMaxCount"] = stressInstanceMaxCount;                        
+                        arguments["stressPath"] = stressInstancePath;
+                        arguments["stressTest"] = stressTestMode;
+                        arguments["stressInstanceMaxCount"] = stressInstanceMaxCount;
+                        arguments["selfJsonTestMode"] = selfJsonTestMode;
+                        arguments["selfJsonPath"] = selfJsonPath;
+
                         jsonContent = arguments.ToJson();
                     }
                     else
@@ -917,9 +822,11 @@ namespace BlueTaleManager
                         doneMp4Path = (string)arguments["doneMp4Path"];
                         debugMode = (bool)arguments["debugMode"];
                         remoteFileRecipient = (bool)arguments["remoteFileRecipient"];
-                        stressPath = (string)arguments["stressPath"];
-                        stressTest = (bool)arguments["stressTest"];
-                        stressInstanceMaxCount = (int)arguments["stressInstanceMaxCount"];      
+                        stressInstancePath = (string)arguments["stressPath"];
+                        stressTestMode = (bool)arguments["stressTest"];
+                        stressInstanceMaxCount = (int)arguments["stressInstanceMaxCount"];
+                        selfJsonTestMode = (bool)arguments["selfJsonTestMode"];
+                        selfJsonPath = (string)arguments["selfJsonPath"];
                     }
                     Console.WriteLine("managerPort: " + managerPort);
                     Console.WriteLine("serverStartId: " + ServerStartId);
@@ -929,11 +836,12 @@ namespace BlueTaleManager
                     Console.WriteLine("showPercentAddress: " + showPercentAddress);
                     Console.WriteLine("checkJsonAddress: " + checkJsonAddress);
                     Console.WriteLine("doneMp4Path: " + doneMp4Path);
-                    Console.WriteLine("stressPath: " + stressPath);
-                    Console.WriteLine("stressTest: " + stressTest);
+                    Console.WriteLine("stressInstancePath: " + stressInstancePath);
+                    Console.WriteLine("stressTestMode: " + stressTestMode);
                     Console.WriteLine("stressInstanceMaxCount: " + stressInstanceMaxCount);
                     Console.WriteLine("remoteFileRecipient: " + remoteFileRecipient);
-                    Console.WriteLine("debugMode: " + debugMode);
+                    Console.WriteLine("selfJsonTestMode: " + selfJsonTestMode);
+                    Console.WriteLine("selfJsonPath: " + selfJsonPath);
                 }
                 using (StreamWriter sw = new StreamWriter(fi.OpenWrite()))
                 {
@@ -952,13 +860,51 @@ namespace BlueTaleManager
                     AcceptCallback(ar);
                 }, socketServer);
 
-                if (stressTest)
+                if (stressTestMode)//如果是测试，启动server,让server自己从磁盘获得json
                 {
-                    finishInstanceCount = 0;
+                    stressRecordFileName += System.Environment.TickCount.ToString();
+                    stressFinishInstanceCount = 0;
                     StartInstance();
-
                 }
-                else
+                else if (selfJsonTestMode)
+                {
+                    Thread missionThread = new Thread(() =>
+                    {
+                        while (true)
+                        {
+                            if (missionQueue.Count > 0)
+                            {
+                                Socket ts = missionQueue.Dequeue();
+
+                                GetSelfJsonMission(ts);
+
+                            }
+                            Thread.Sleep(50);
+                        }
+
+                    });
+                    missionThread.Start();
+                }
+                else if (debugMode)
+                {
+                    Thread missionThread = new Thread(() =>
+                    {
+                        while (true)
+                        {
+                            if (missionQueue.Count > 0)
+                            {
+                                Socket ts = missionQueue.Dequeue();
+
+                                GetDebugModeMission(ts);
+
+                            }
+                            Thread.Sleep(50);
+                        }
+
+                    });
+                    missionThread.Start();
+                }
+                else//否则，从数据库过得json
                 {
                     Thread missionThread = new Thread(() =>
                     {
@@ -1010,12 +956,12 @@ namespace BlueTaleManager
                 int workid = jobidManager.GetSocketWorkId(ts);
 
                 STS_SERVER_INFO_Struct data = new STS_SERVER_INFO_Struct() { serverId = workid };
-                SendWithLength(ts, (int)BTESTSCommand.STS_SERVER_INFO, data);           
+                SendWithLength(ts, (int)BTESTSCommand.STS_SERVER_INFO, data);
 
                 ts.BeginReceive(tmpData, 0, tmpData.Length, SocketFlags.None, new AsyncCallback(ReceiveCallback), ts);
                 ServerSocketIsCasual(ts);
 
-                if (stressTest)
+                if (stressTestMode)
                 {
                     Console.WriteLine("stressTest");
                     stressInstanceCount++;
