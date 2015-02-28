@@ -15,6 +15,7 @@ using System.Runtime.Serialization.Formatters.Binary;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+//using System.Threading.Tasks;
 //任务成功，但是php一直连不上，处理方法是不断尝试
 //任务失败，但是php一直连不上，处理方法是丢弃任务
 //server断开连接，处理方法是告诉php，任务没接收，但如果php一直连不上，处理方法是丢弃任务
@@ -161,6 +162,19 @@ namespace BlueTaleManager
                 case BTEGFSCommand.GFS_GENERATEVIDEODONE:
                     {
                         Console.WriteLine("BTEGFSCommand.GFS_GENERATEVIDEODONE");
+                        IFormatter formatter = new BinaryFormatter();
+                        formatter.Binder = new UBinder();
+                        MemoryStream ms = new MemoryStream(UnPack(dataSave.bodyData));
+                        GFS_GENERATEVIDEODONE_Struct obj = (GFS_GENERATEVIDEODONE_Struct)formatter.Deserialize(ms);
+
+                        Console.WriteLine("[server id] " + obj.serverID);
+                        Console.WriteLine("[jobID] " + obj.jobID);
+                        Console.WriteLine("[templateName] " + obj.templateName);
+                        Console.WriteLine("[startTime] " + obj.startTime);
+                        Console.WriteLine("[renderDoneTime] " + obj.renderDoneTime);
+                        Console.WriteLine("[endTime] " + obj.endTime);
+                        Console.WriteLine("[fileSize] " + obj.fileSize);
+                        Console.WriteLine("[videoDuration] " + obj.videoDuration);
                         TryTellPhpServerJobDone(ts, dataSave, false);
                     }
                     break;
@@ -383,8 +397,9 @@ namespace BlueTaleManager
                             IFormatter formatter = new BinaryFormatter();
                             formatter.Binder = new UBinder();
                             MemoryStream ms = new MemoryStream(UnPack(data.bodyData));
-                            GFS_GENERATEVIDEODONE_Struct obj = (GFS_GENERATEVIDEODONE_Struct)formatter.Deserialize(ms);
-                            Console.WriteLine("mp4 path " + obj.mp4Path);
+                            GFS_GENERATEVIDEODONE_Struct obj = (GFS_GENERATEVIDEODONE_Struct)formatter.Deserialize(ms);                            
+              
+                            Console.WriteLine("done mp4 path " + obj.mp4Path);
                             CopyVideoFile(obj.mp4Path);
 
                             string jobDone = doneAddress + jobID.ToString();
@@ -766,7 +781,7 @@ namespace BlueTaleManager
                 string exePathDir = stressInstancePath;
                 string exeName = "bteserver_d3d11.exe";
                 Process standalone = Process.Start("cmd", string.Format("/c cd /d {0} && {1}", exePathDir, exeName));
-                ServerStatusRecord.GetInstance().processList.Add(standalone);
+                
                 Console.WriteLine(string.Format("/c cd /d {0} && {1}", exePathDir, exeName));
             }
         }

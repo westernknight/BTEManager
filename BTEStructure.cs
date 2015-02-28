@@ -36,8 +36,6 @@ namespace BlueTaleManager
     {
         public bool hasContent;
         public string jasonContent;
-        public string jasonPath;
-        public string unity3dPath;
     }
     [Serializable]
     struct STS_SERVER_INFO_Struct
@@ -56,6 +54,14 @@ namespace BlueTaleManager
     struct GFS_GENERATEVIDEODONE_Struct
     {
         public string mp4Path;
+        public int serverID;
+        public int jobID;
+        public string templateName;
+        public DateTime startTime;
+        public DateTime renderDoneTime;
+        public DateTime endTime;
+        public long fileSize;
+        public string videoDuration;
     }
     [Serializable]
     struct GFS_EXCEPTION_Struct
