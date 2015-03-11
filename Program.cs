@@ -1,7 +1,9 @@
 ﻿
 //#define LOCAL_FILE
 
+using GpuzDemo;
 using System;
+using System.Collections;
 using System.Collections.Generic;
 using System.Diagnostics;
 using System.IO;
@@ -15,6 +17,7 @@ using System.Runtime.Serialization.Formatters.Binary;
 using System.Text;
 using System.Threading;
 using System.Threading.Tasks;
+using Tamir.SharpSsh;
 //using System.Threading.Tasks;
 //任务成功，但是php一直连不上，处理方法是不断尝试
 //任务失败，但是php一直连不上，处理方法是丢弃任务
@@ -34,6 +37,11 @@ namespace BlueTaleManager
     public class Program
     {
 
+        static GpuzWrapper gpuz = null;
+        static double peakGraphicsMemory = 0;
+        static double baseGraphicsMemory = 0;
+        static double peakGPULoad = 0;
+        static Sftp sshCp = null;
 
         static byte[] tmpData = new byte[1000 * 1024];
 
@@ -52,24 +60,29 @@ namespace BlueTaleManager
             get { return Program.serverStartId; }
             set { Program.serverStartId = value; }
         }
-        static string queryAddress;
-        static string requireAddress;
-        static string doneAddress;
-        static string doneMp4Path;
-        static string showPercentAddress;
-        static string checkJsonAddress;
+        static string queryAddress = "http://s1/bteweb/server/query.php?work_id=";
+        static string requireAddress = "http://s1/bteweb/server/requireJob.php?id=";
+        static string doneAddress = "http://s1/bteweb/server/jobDone.php?job_id=";
+        static string doneMp4Path = @"\\S1\htdocs\bte\Public\Video\";
+        static string showPercentAddress = "http://s1/bte/Video/showpercent";
+        static string checkJsonAddress = "http://s1/bte/Video/checkjson?id=";
+
+    
 
         static bool debugMode = true;//是否输入测试测试
-
+        static bool useFtpUpload = false;//是否ftp上传生成的视频
         static bool remoteFileRecipient = false;//是否接收server的文件
 
         //========多个实例测试硬件
         static bool stressTestMode = false;//是否测试
-        static string stressInstancePath;
+        static string stressInstancePath = @"R:\";
+        static int stressGPULoadSensorValue = 5;
+        static int stressMemUsageSensorValue = 6;
         static int stressInstanceMaxCount = 2;
         static int stressInstanceCount = 0;
         static int stressFinishInstanceCount;
         static string stressRecordFileName = "record";
+        static int stressStartCount = 1;
 
         //========自定json测试
         static bool selfJsonTestMode = false;
@@ -77,7 +90,7 @@ namespace BlueTaleManager
         static int selfJsonFinishCount = 0;
         static LitJson.JsonData selfJsonData = null;
 
-        static List<Socket> allSockets = new List<Socket>();
+        static Dictionary<Socket, bool> allSockets = new Dictionary<Socket, bool>();
 
 
 
@@ -106,6 +119,18 @@ namespace BlueTaleManager
             {
                 case BTEGFSCommand.GFS_MINSSION_WORK_PERCNET:
                     {
+                        if (gpuz != null)
+                        {
+                            if (peakGraphicsMemory < gpuz.SensorValue(stressMemUsageSensorValue))
+                            {
+                                peakGraphicsMemory = gpuz.SensorValue(stressMemUsageSensorValue);
+                            }
+                            if (peakGPULoad < gpuz.SensorValue(stressGPULoadSensorValue))
+                            {
+                                peakGPULoad = gpuz.SensorValue(stressGPULoadSensorValue);
+                            }
+                        }
+
                         Console.WriteLine("BTEGFSCommand.GFS_MINSSION_WORK_PERCNET");
                         IFormatter formatter = new BinaryFormatter();
                         formatter.Binder = new UBinder();
@@ -121,7 +146,7 @@ namespace BlueTaleManager
                                 int id = jobidManager.GetSocketJobId(ts);
                                 IDictionary<string, string> parameters = new Dictionary<string, string>();
                                 parameters.Add("job_id", id.ToString());
-                                parameters.Add("info", string.Format("{0:N1}", obj.percent * 100));
+                                parameters.Add("info", string.Format("{0:N1}", obj.percent * 90));
                                 var response = HttpWebResponseUtility.CreatePostHttpResponse(showPercentAddress, parameters, null, null, Encoding.UTF8, null);
                                 if (response != null)
                                 {
@@ -158,6 +183,8 @@ namespace BlueTaleManager
                     break;
                 case BTEGFSCommand.GFS_GENERATEVIDEOREQUESTSUCCEEDED:
                     Console.WriteLine("BTEGFSCommand.GFS_GENERATEVIDEOREQUESTSUCCEEDED");
+                    peakGraphicsMemory = 0;
+                    peakGPULoad = 0;
                     break;
                 case BTEGFSCommand.GFS_GENERATEVIDEODONE:
                     {
@@ -187,7 +214,9 @@ namespace BlueTaleManager
                         MemoryStream ms = new MemoryStream(UnPack(dataSave.bodyData));
                         GFS_SERVER_STRESS_TEST_REPORT_Struct obj = (GFS_SERVER_STRESS_TEST_REPORT_Struct)formatter.Deserialize(ms);
 
-                        string info = string.Format("{0},{1},{2},(startTime){3},(renderDoneTime){4},(endTime){5},(generateDeltaTime){6},(renderDeltaTime){7},(ffmpegDeltaTime){8},(fileSize){9:N2},(videoDuration){10},(peakMemory){11:N2},(graphicsMemUse){12:N2},(gpuLoad){13:N2},{14}", stressInstanceCount, obj.serverID, obj.templateName, obj.startTime, obj.renderDoneTime, obj.endTime, (obj.endTime - obj.startTime).TotalSeconds, (obj.renderDoneTime - obj.startTime).TotalSeconds, (obj.endTime - obj.renderDoneTime).TotalSeconds, (float)obj.fileSize / 1024 / 1024, obj.videoDuration, obj.peakMemory, obj.graphicsMemUse, obj.gpuLoad, obj.noWrong);
+
+
+                        string info = string.Format("{0},{1},{2},(startTime){3},(renderDoneTime){4},(endTime){5},(generateDeltaTime){6},(renderDeltaTime){7},(ffmpegDeltaTime){8},(fileSize){9:N2},(videoDuration){10},(peakMemory){11:N2},(loadBundleTime){12},(peakGraphicsMemory){13},(peakGPULoad){14}", stressInstanceCount, obj.serverID, obj.templateName, obj.startTime, obj.renderDoneTime, obj.endTime, (obj.endTime - obj.startTime).TotalSeconds, (obj.renderDoneTime - obj.startTime).TotalSeconds, (obj.endTime - obj.renderDoneTime).TotalSeconds, (float)obj.fileSize / 1024 / 1024, obj.videoDuration, obj.peakMemory / 1024, obj.loadBundleTime.TotalSeconds, peakGraphicsMemory - baseGraphicsMemory, peakGPULoad);
 
 
                         Process.Start("cmd", string.Format("/c echo {0}>>{1}.txt", info, stressRecordFileName));
@@ -206,6 +235,10 @@ namespace BlueTaleManager
 
                             StartInstance();
                         }
+
+                        //socket stress done 
+                        allSockets[ts] = true;
+
 
                     }
                     break;
@@ -321,12 +354,12 @@ namespace BlueTaleManager
             Socket ts = (Socket)result.AsyncState;
             try
             {
-               
+
                 int c = ts.EndReceive(result);
 
                 result.AsyncWaitHandle.Close();
                 if (c == 0)
-                {                   
+                {
                     ServerDisconnect(ts);
                 }
                 else
@@ -357,6 +390,7 @@ namespace BlueTaleManager
             {
                 jobidManager.CloseSocket(ts);
                 allSockets.Remove(ts);
+
                 stressInstanceCount--;
                 ts.Disconnect(false);
                 Console.WriteLine("客户端已断开连接");
@@ -375,7 +409,7 @@ namespace BlueTaleManager
 
             int jobID = jobidManager.GetSocketJobId(ts);
 
-            if (debugMode||stressTestMode||selfJsonTestMode)
+            if (debugMode || stressTestMode || selfJsonTestMode)
             {
                 ServerSocketIsCasual(ts);
             }
@@ -397,10 +431,31 @@ namespace BlueTaleManager
                             IFormatter formatter = new BinaryFormatter();
                             formatter.Binder = new UBinder();
                             MemoryStream ms = new MemoryStream(UnPack(data.bodyData));
-                            GFS_GENERATEVIDEODONE_Struct obj = (GFS_GENERATEVIDEODONE_Struct)formatter.Deserialize(ms);                            
-              
+                            GFS_GENERATEVIDEODONE_Struct obj = (GFS_GENERATEVIDEODONE_Struct)formatter.Deserialize(ms);
+
                             Console.WriteLine("done mp4 path " + obj.mp4Path);
                             CopyVideoFile(obj.mp4Path);
+
+
+                           
+                                int id = jobidManager.GetSocketJobId(ts);
+                                IDictionary<string, string> parameters = new Dictionary<string, string>();
+                                parameters.Add("job_id", id.ToString());
+                                parameters.Add("info", string.Format("{0:N1}", 100));
+                                var response = HttpWebResponseUtility.CreatePostHttpResponse(showPercentAddress, parameters, null, null, Encoding.UTF8, null);
+                                if (response != null)
+                                {
+                                    Stream _str = response.GetResponseStream();
+                                    StreamReader _strd = new StreamReader(_str);
+                                    string html = _strd.ReadToEnd();
+                                    response.Close();
+                                }
+                                else
+                                {
+                                    response.Close();
+                                }
+                            
+
 
                             string jobDone = doneAddress + jobID.ToString();
                             HttpWebRequest _HttpWebRequest = HttpWebRequest.Create(jobDone) as HttpWebRequest;
@@ -497,6 +552,24 @@ namespace BlueTaleManager
                 {
                     File.Copy(videoFilepath, destFilepath, true);
                     File.Copy(videoFilepath2, destFilepath2, true);
+
+                    if (useFtpUpload)
+                    {
+                        try
+                        {
+                            DateTime copystart = DateTime.Now;
+                            Console.WriteLine("copy to ftp start");
+                            sshCp.Put(videoFilepath, string.Format("../webapp/app/Public/Video/{0}", Path.GetFileName(videoFilepath)));
+                            sshCp.Put(videoFilepath2, string.Format("../webapp/app/Public/Video/{0}", Path.GetFileName(videoFilepath2)));
+                            Console.WriteLine("copy span time: " + (DateTime.Now - copystart).TotalSeconds + "s");
+                        }
+                        catch (Exception e)
+                        {
+
+                            Console.WriteLine(e);
+                        }
+                    }
+                    
                 }
 
 
@@ -572,9 +645,9 @@ namespace BlueTaleManager
                     jsonFiles.Add(item);
                 }
             }
-            if (jsonFiles.Count!=0)
+            if (jsonFiles.Count != 0)
             {
-                
+
             }
             if (selfJsonFinishCount < jsonFiles.Count)
             {
@@ -593,7 +666,7 @@ namespace BlueTaleManager
                 }
                 selfJsonFinishCount++;
             }
-            else if (jsonFiles.Count!=0)
+            else if (jsonFiles.Count != 0)
             {
                 selfJsonFinishCount = 0;
                 Console.WriteLine("all json has finish,press any key to restart...");
@@ -781,12 +854,29 @@ namespace BlueTaleManager
                 string exePathDir = stressInstancePath;
                 string exeName = "bteserver_d3d11.exe";
                 Process standalone = Process.Start("cmd", string.Format("/c cd /d {0} && {1}", exePathDir, exeName));
-                
+
                 Console.WriteLine(string.Format("/c cd /d {0} && {1}", exePathDir, exeName));
             }
         }
+        static void CheckKeys(LitJson.JsonData arguments)
+        {
+           
+        }
         static void Main(string[] args)
         {
+            bool testftp = false;
+            if (testftp)//是否测试ftp
+            {
+                sshCp = new Sftp("115.28.191.93", "root", "Bluearc310");
+                sshCp.Connect();
+                Console.WriteLine("ftp connect: " + sshCp.Connected);
+
+                DateTime copystart = DateTime.Now;
+                sshCp.Put("d:/11056.mp4", string.Format("../webapp/app/Public/Video/{0}", "11056.mp4"));
+                Console.WriteLine("copy span time: " + (DateTime.Now - copystart).TotalSeconds + "s");
+                return;
+            }     
+
 
             try
             {
@@ -799,13 +889,7 @@ namespace BlueTaleManager
                     {
                         LitJson.JsonData arguments = new LitJson.JsonData();
 
-                        queryAddress = "http://s1/bteweb/server/query.php?work_id=";
-                        requireAddress = "http://s1/bteweb/server/requireJob.php?id=";
-                        doneAddress = "http://s1/bteweb/server/jobDone.php?job_id=";
-                        showPercentAddress = "http://s1/bte/Video/showpercent";
-                        checkJsonAddress = "http://s1/bte/Video/checkjson?id=";
-                        stressInstancePath = @"C:\Users\Administrator\Desktop\btetest";
-                        doneMp4Path = @"\\S1\htdocs\bte\Public\Video\";
+                        
                         arguments["managerPort"] = managerPort;
                         arguments["serverStartId"] = ServerStartId;
                         arguments["queryAddress"] = queryAddress;
@@ -815,18 +899,24 @@ namespace BlueTaleManager
                         arguments["checkJsonAddress"] = checkJsonAddress;
                         arguments["doneMp4Path"] = doneMp4Path;
                         arguments["debugMode"] = debugMode;
+                        arguments["useFtpUpload"] = useFtpUpload;
                         arguments["remoteFileRecipient"] = remoteFileRecipient;
-                        arguments["stressPath"] = stressInstancePath;
                         arguments["stressTest"] = stressTestMode;
+                        arguments["stressStartCount"] = stressStartCount;
+                        arguments["stressPath"] = stressInstancePath;
+                        arguments["stressGPULoadSensorValue"] = stressGPULoadSensorValue;
+                        arguments["stressGPUZMemUsageSensorValue"] = stressMemUsageSensorValue;
                         arguments["stressInstanceMaxCount"] = stressInstanceMaxCount;
                         arguments["selfJsonTestMode"] = selfJsonTestMode;
                         arguments["selfJsonPath"] = selfJsonPath;
+
 
                         jsonContent = arguments.ToJson();
                     }
                     else
                     {
                         LitJson.JsonData arguments = LitJson.JsonMapper.ToObject(jsonContent);
+                        
                         managerPort = (int)arguments["managerPort"];
                         ServerStartId = (int)arguments["serverStartId"];
                         queryAddress = (string)arguments["queryAddress"];
@@ -836,12 +926,19 @@ namespace BlueTaleManager
                         checkJsonAddress = (string)arguments["checkJsonAddress"];
                         doneMp4Path = (string)arguments["doneMp4Path"];
                         debugMode = (bool)arguments["debugMode"];
+                        useFtpUpload = (bool)arguments["useFtpUpload"];
                         remoteFileRecipient = (bool)arguments["remoteFileRecipient"];
                         stressInstancePath = (string)arguments["stressPath"];
                         stressTestMode = (bool)arguments["stressTest"];
+
+                        stressGPULoadSensorValue = (int)arguments["stressGPULoadSensorValue"];
+                        stressMemUsageSensorValue = (int)arguments["stressGPUZMemUsageSensorValue"];
+
+
                         stressInstanceMaxCount = (int)arguments["stressInstanceMaxCount"];
                         selfJsonTestMode = (bool)arguments["selfJsonTestMode"];
                         selfJsonPath = (string)arguments["selfJsonPath"];
+                        stressStartCount = (int)arguments["stressStartCount"];
                     }
                     Console.WriteLine("managerPort: " + managerPort);
                     Console.WriteLine("serverStartId: " + ServerStartId);
@@ -851,12 +948,18 @@ namespace BlueTaleManager
                     Console.WriteLine("showPercentAddress: " + showPercentAddress);
                     Console.WriteLine("checkJsonAddress: " + checkJsonAddress);
                     Console.WriteLine("doneMp4Path: " + doneMp4Path);
+                    Console.WriteLine("debugMode: " + debugMode);
+                    Console.WriteLine("useFtpUpload: " + useFtpUpload);
                     Console.WriteLine("stressInstancePath: " + stressInstancePath);
                     Console.WriteLine("stressTestMode: " + stressTestMode);
                     Console.WriteLine("stressInstanceMaxCount: " + stressInstanceMaxCount);
+                    Console.WriteLine("stressStartCount: " + stressStartCount);
+                    Console.WriteLine("stressGPULoadSensorValue: " + stressGPULoadSensorValue);
+                    Console.WriteLine("stressMemUsageSensorValue: " + stressMemUsageSensorValue);
                     Console.WriteLine("remoteFileRecipient: " + remoteFileRecipient);
                     Console.WriteLine("selfJsonTestMode: " + selfJsonTestMode);
                     Console.WriteLine("selfJsonPath: " + selfJsonPath);
+
                 }
                 using (StreamWriter sw = new StreamWriter(fi.OpenWrite()))
                 {
@@ -867,6 +970,13 @@ namespace BlueTaleManager
                 socketServer = new Socket(AddressFamily.InterNetwork, SocketType.Stream, ProtocolType.Tcp);
                 socketServer.Bind(new IPEndPoint(IPAddress.Any, managerPort));
                 socketServer.Listen(int.MaxValue);
+                if (useFtpUpload)
+                {
+                    sshCp = new Sftp("115.28.191.93", "root", "Bluearc310");
+                    sshCp.Connect();
+                    Console.WriteLine("ftp connect: " + sshCp.Connected);
+                }
+               
                 Console.WriteLine("服务端已启动，等待连接...");
 
 
@@ -877,9 +987,26 @@ namespace BlueTaleManager
 
                 if (stressTestMode)//如果是测试，启动server,让server自己从磁盘获得json
                 {
+                    try
+                    {
+                        gpuz = new GpuzWrapper();
+                        gpuz.Open();
+                        baseGraphicsMemory = gpuz.SensorValue(stressMemUsageSensorValue);
+                    }
+                    catch (Exception ex)
+                    {
+
+                        Console.WriteLine(ex);
+                    }
+
                     stressRecordFileName += System.Environment.TickCount.ToString();
                     stressFinishInstanceCount = 0;
-                    StartInstance();
+                    for (int i = 0; i < stressStartCount; i++)
+                    {
+                        StartInstance();
+                    }
+
+
                 }
                 else if (selfJsonTestMode)
                 {
@@ -951,22 +1078,16 @@ namespace BlueTaleManager
                 Console.ReadKey();
             }
         }
-
         private static void AcceptCallback(IAsyncResult ar)
         {
             try
             {
-                socketServer.BeginAccept((ar2) =>
-                {
-                    AcceptCallback(ar2);
-
-                }, socketServer);
-
 
                 Socket ts = socketServer.EndAccept(ar);
                 ar.AsyncWaitHandle.Close();
                 Console.WriteLine("客户端已连接");
-                allSockets.Add(ts);
+                allSockets.Add(ts, true);
+
 
                 int workid = jobidManager.GetSocketWorkId(ts);
 
@@ -978,14 +1099,25 @@ namespace BlueTaleManager
 
                 if (stressTestMode)
                 {
-                    Console.WriteLine("stressTest");
                     stressInstanceCount++;
-                    foreach (var item in allSockets)
-                    {
-                        SendWithLength(item, (int)BTESTSCommand.STS_SERVER_STRESS_TEST);
-                    }
 
+                    foreach (KeyValuePair<Socket, bool> kvp in allSockets)
+                    {
+                        if (kvp.Value)
+                        {
+                            SendWithLength(kvp.Key, (int)BTESTSCommand.STS_SERVER_STRESS_TEST);
+                        }
+                    }
+                    allSockets[ts] = false;
                 }
+
+
+                socketServer.BeginAccept((ar2) =>
+                {
+                    AcceptCallback(ar2);
+
+                }, socketServer);
+
 
             }
             catch (Exception e)

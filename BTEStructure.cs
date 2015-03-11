@@ -76,14 +76,13 @@ namespace BlueTaleManager
         public string templateName;
         public float peakMemory;
         public DateTime startTime;
+        public TimeSpan loadBundleTime;
         public DateTime renderDoneTime;
         public DateTime endTime;
         public int fileSize;
         public string fileName;
         public string videoDuration;
-        public bool noWrong;
-        public double gpuLoad;
-        public double graphicsMemUse;
+
     }
 
 }
