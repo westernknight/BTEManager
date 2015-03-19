@@ -9,4 +9,3 @@ C:\Users\Administrator\Desktop\bte\BTEManager.exe
 C:\Users\Administrator\Desktop\bte\BTEManager.pdb
 D:\zhangjiajun\studio\BTEManager\trunk\obj\Debug\BTEManager.exe
 D:\zhangjiajun\studio\BTEManager\trunk\obj\Debug\BTEManager.pdb
-D:\zhangjiajun\studio\BTEManager\trunk\obj\Debug\BTEManager.csprojResolveAssemblyReference.cache

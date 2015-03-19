@@ -565,8 +565,28 @@ namespace BlueTaleManager
                         }
                         catch (Exception e)
                         {
-
+                            Console.WriteLine("sshCp: ",sshCp);
                             Console.WriteLine(e);
+
+                            Console.WriteLine("尝试重连ftp");
+
+                            sshCp = new Sftp("115.28.191.93", "root", "Bluearc310");
+                            sshCp.Connect();
+
+                            Console.WriteLine("尝试重连重新发送文件");
+
+                            try
+                            {
+                                DateTime copystart = DateTime.Now;
+                                Console.WriteLine("copy to ftp start");
+                                sshCp.Put(videoFilepath, string.Format("../webapp/app/Public/Video/{0}", Path.GetFileName(videoFilepath)));
+                                sshCp.Put(videoFilepath2, string.Format("../webapp/app/Public/Video/{0}", Path.GetFileName(videoFilepath2)));
+                                Console.WriteLine("copy span time: " + (DateTime.Now - copystart).TotalSeconds + "s");
+                            }
+                            catch (Exception ex)
+                            {
+                                Console.WriteLine(ex);
+                            }
                         }
                     }
                     
